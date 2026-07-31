@@ -1,81 +1,17 @@
 /**
  * SeriesFlix - Recomendações de Séries
- * Usa a API do TMDb diretamente do navegador
- * Acesso a TODAS as séries já publicadas
+ * Frontend que chama a API do backend
  */
 
-// TMDb API - Chave salva no navegador
-const TMDB_BASE = 'https://api.themoviedb.org/3';
-const IMG_BASE = 'https://image.tmdb.org/t/p/w500';
-const IMG_SMALL = 'https://image.tmdb.org/t/p/w185';
-
-let TMDB_KEY = localStorage.getItem('tmdb_api_key') || '';
 let selectedSerieId = null;
 let selectedSerieGenres = [];
 let searchTimeout = null;
 
 // ======== INICIALIZAÇÃO ========
 document.addEventListener('DOMContentLoaded', () => {
-    if (!TMDB_KEY) {
-        mostrarConfigApiKey();
-    } else {
-        carregarPopulares();
-    }
+    carregarPopulares();
     setupEventListeners();
 });
-
-function mostrarConfigApiKey() {
-    const main = document.querySelector('main.container');
-    const apiBox = document.createElement('div');
-    apiBox.id = 'apiKeySetup';
-    apiBox.className = 'api-key-setup';
-    apiBox.innerHTML = `
-        <div class="api-key-card">
-            <h2>🔑 Configure sua chave da API (uma vez só)</h2>
-            <p>Para acessar <strong>todas as séries que existem</strong>, usamos a base do TMDb (gratuita).</p>
-            <ol>
-                <li>Crie conta grátis em <a href="https://www.themoviedb.org/signup" target="_blank">themoviedb.org/signup</a></li>
-                <li>Após confirmar o email, vá em <a href="https://www.themoviedb.org/settings/api" target="_blank">Configurações > API</a></li>
-                <li>Clique em "Criar" > escolha "Developer" > preencha o formulário (pode colocar qualquer coisa)</li>
-                <li>Copie a chave "API Key (v3 auth)" e cole abaixo:</li>
-            </ol>
-            <div class="api-key-input-group">
-                <input type="text" id="apiKeyInput" placeholder="Cole sua API Key aqui..." autocomplete="off">
-                <button id="apiKeySaveBtn">Salvar e Começar</button>
-            </div>
-            <p class="api-key-note">A chave é salva apenas no seu navegador. Não é enviada para nenhum servidor nosso.</p>
-        </div>
-    `;
-    main.insertBefore(apiBox, main.querySelector('.search-section'));
-
-    document.getElementById('apiKeySaveBtn').addEventListener('click', salvarApiKey);
-    document.getElementById('apiKeyInput').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') salvarApiKey();
-    });
-}
-
-async function salvarApiKey() {
-    const input = document.getElementById('apiKeyInput');
-    const key = input.value.trim();
-    if (!key) { input.focus(); return; }
-
-    // Testa a chave
-    try {
-        const res = await fetch(`${TMDB_BASE}/configuration?api_key=${key}`);
-        if (!res.ok) {
-            alert('Chave inválida. Verifique e tente novamente.');
-            return;
-        }
-    } catch (e) {
-        alert('Erro de conexão. Verifique sua internet.');
-        return;
-    }
-
-    TMDB_KEY = key;
-    localStorage.setItem('tmdb_api_key', key);
-    document.getElementById('apiKeySetup').remove();
-    carregarPopulares();
-}
 
 function setupEventListeners() {
     const searchInput = document.getElementById('searchInput');
@@ -116,22 +52,14 @@ function setupEventListeners() {
     });
 }
 
-// ======== API TMDb ========
-async function tmdb(endpoint, params = {}) {
-    params.api_key = TMDB_KEY;
-    params.language = 'pt-BR';
-    const qs = new URLSearchParams(params).toString();
-    const res = await fetch(`${TMDB_BASE}${endpoint}?${qs}`);
-    if (!res.ok) throw new Error(`TMDb error: ${res.status}`);
-    return res.json();
-}
-
 // ======== POPULARES ========
 async function carregarPopulares() {
     try {
-        const data = await tmdb('/tv/popular', { page: 1 });
+        const res = await fetch('/api/populares');
+        const data = await res.json();
+        if (!data.resultados || data.resultados.length === 0) return;
         const grid = document.getElementById('popularGrid');
-        grid.innerHTML = data.results.slice(0, 20).map(s => cardHTML(s)).join('');
+        grid.innerHTML = data.resultados.map(s => cardHTML(s)).join('');
     } catch (e) {
         console.error('Erro ao carregar populares:', e);
     }
@@ -141,10 +69,13 @@ async function carregarPopulares() {
 async function buscarSeries(query) {
     if (!query || query.length < 2) return;
     try {
-        const data = await tmdb('/search/tv', { query });
-        mostrarResultadosBusca(data.results.slice(0, 10));
+        const res = await fetch(`/api/buscar?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        if (res.ok) {
+            mostrarResultadosBusca(data.resultados);
+        }
     } catch (e) {
-        mostrarErro('Erro ao buscar. Verifique sua chave da API.');
+        mostrarErro('Erro ao buscar séries.');
     }
 }
 
@@ -157,12 +88,12 @@ function mostrarResultadosBusca(results) {
     }
     sr.innerHTML = results.map(s => `
         <div class="search-result-item" onclick="selecionarSerie(${s.id})">
-            ${s.poster_path
-                ? `<img src="${IMG_SMALL}${s.poster_path}" alt="${s.name}" loading="lazy">`
+            ${s.poster
+                ? `<img src="${s.poster}" alt="${s.nome}" loading="lazy">`
                 : '<div class="no-poster">🎬</div>'}
             <div class="search-result-info">
-                <h4>${s.name}</h4>
-                <span>${(s.first_air_date || '').slice(0, 4) || 'N/A'} • ⭐ ${s.vote_average ? s.vote_average.toFixed(1) : 'N/A'}</span>
+                <h4>${s.nome}</h4>
+                <span>${s.ano || 'N/A'} • ⭐ ${s.nota ? s.nota.toFixed(1) : 'N/A'}</span>
             </div>
         </div>
     `).join('');
@@ -182,12 +113,14 @@ async function selecionarSerie(id) {
     mostrarLoading();
 
     try {
-        const data = await tmdb(`/tv/${id}`, { append_to_response: 'credits' });
+        const res = await fetch(`/api/detalhes/${id}`);
+        const data = await res.json();
+        if (!res.ok) { mostrarErro(data.error || 'Erro'); return; }
         selectedSerieId = id;
-        selectedSerieGenres = data.genres.map(g => g.id);
+        selectedSerieGenres = data.genero_ids || [];
         mostrarDetalhes(data);
     } catch (e) {
-        mostrarErro('Erro ao carregar detalhes da série.');
+        mostrarErro('Erro ao carregar detalhes.');
     } finally {
         esconderLoading();
     }
@@ -197,9 +130,9 @@ function mostrarDetalhes(s) {
     const poster = document.getElementById('selectedPoster');
     const placeholder = document.getElementById('selectedPosterPlaceholder');
 
-    if (s.poster_path) {
-        poster.src = `${IMG_BASE}${s.poster_path}`;
-        poster.alt = s.name;
+    if (s.poster) {
+        poster.src = s.poster;
+        poster.alt = s.nome;
         poster.classList.remove('hidden');
         placeholder.classList.add('hidden');
     } else {
@@ -207,25 +140,24 @@ function mostrarDetalhes(s) {
         placeholder.classList.remove('hidden');
     }
 
-    document.getElementById('selectedName').textContent = s.name;
-    document.getElementById('selectedYear').textContent = (s.first_air_date || '').slice(0, 4) || 'N/A';
-    document.getElementById('selectedRating').textContent = `⭐ ${s.vote_average ? s.vote_average.toFixed(1) : 'N/A'}`;
-    document.getElementById('selectedSeasons').textContent = s.number_of_seasons ? `${s.number_of_seasons} temporada${s.number_of_seasons > 1 ? 's' : ''}` : '';
-    document.getElementById('selectedGenres').textContent = s.genres.map(g => g.name).join(' • ');
-    document.getElementById('selectedSynopsis').textContent = s.overview || 'Sem sinopse disponível.';
+    document.getElementById('selectedName').textContent = s.nome;
+    document.getElementById('selectedYear').textContent = s.ano || 'N/A';
+    document.getElementById('selectedRating').textContent = `⭐ ${s.nota ? s.nota.toFixed(1) : 'N/A'}`;
+    document.getElementById('selectedSeasons').textContent = s.num_temporadas ? `${s.num_temporadas} temporada${s.num_temporadas > 1 ? 's' : ''}` : '';
+    document.getElementById('selectedGenres').textContent = (s.generos || []).join(' • ');
+    document.getElementById('selectedSynopsis').textContent = s.sinopse || 'Sem sinopse disponível.';
 
     mostrar('selectedSeries');
 
     // Elenco
-    const cast = (s.credits && s.credits.cast) ? s.credits.cast.slice(0, 10) : [];
-    if (cast.length > 0) {
-        document.getElementById('castList').innerHTML = cast.map(a => `
+    if (s.elenco && s.elenco.length > 0) {
+        document.getElementById('castList').innerHTML = s.elenco.map(a => `
             <div class="cast-item">
-                ${a.profile_path
-                    ? `<img src="${IMG_SMALL}${a.profile_path}" alt="${a.name}" loading="lazy">`
+                ${a.foto
+                    ? `<img src="${a.foto}" alt="${a.nome}" loading="lazy">`
                     : '<div class="no-photo">👤</div>'}
-                <p title="${a.name}">${a.name}</p>
-                <p class="character">${a.character || ''}</p>
+                <p title="${a.nome}">${a.nome}</p>
+                <p class="character">${a.personagem || ''}</p>
             </div>
         `).join('');
         mostrar('castSection');
@@ -244,70 +176,26 @@ async function buscarRecomendacoes(id, tipo) {
     mostrarLoading();
 
     try {
-        let recs = [];
-        let criterio = '';
-
-        if (tipo === 'genero') {
-            const data = await tmdb('/discover/tv', {
-                with_genres: selectedSerieGenres.join(','),
-                sort_by: 'vote_average.desc',
-                'vote_count.gte': 100,
-                page: 1
-            });
-            recs = data.results.filter(s => s.id !== id).slice(0, 12);
-            criterio = 'Séries do mesmo gênero';
-        } else if (tipo === 'estilo') {
-            const data = await tmdb(`/tv/${id}/recommendations`);
-            recs = data.results.filter(s => s.id !== id).slice(0, 12);
-            if (recs.length < 6) {
-                const sim = await tmdb(`/tv/${id}/similar`);
-                const ids = new Set(recs.map(r => r.id));
-                for (const s of sim.results) {
-                    if (s.id !== id && !ids.has(s.id)) recs.push(s);
-                    if (recs.length >= 12) break;
-                }
-            }
-            criterio = 'Séries com estilo e temática similar';
-        } else if (tipo === 'ator') {
-            const credits = await tmdb(`/tv/${id}/credits`);
-            const topCast = credits.cast.slice(0, 5);
-            const seenIds = new Set([id]);
-            const actorNames = [];
-
-            for (const actor of topCast) {
-                actorNames.push(actor.name);
-                const actorCredits = await tmdb(`/person/${actor.id}/tv_credits`);
-                for (const s of actorCredits.cast) {
-                    if (seenIds.has(s.id) || (s.vote_count || 0) < 20) continue;
-                    seenIds.add(s.id);
-                    s._ator = actor.name;
-                    recs.push(s);
-                }
-                if (recs.length >= 20) break;
-            }
-            recs.sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0));
-            recs = recs.slice(0, 12);
-            criterio = `Atores: ${actorNames.join(', ')}`;
-        }
-
-        mostrarRecomendacoes(recs, criterio);
+        const res = await fetch(`/api/recomendar/${tipo}/${id}`);
+        const data = await res.json();
+        if (!res.ok) { mostrarErro(data.error || 'Erro'); return; }
+        mostrarRecomendacoes(data);
     } catch (e) {
         mostrarErro('Erro ao buscar recomendações.');
-        console.error(e);
     } finally {
         esconderLoading();
     }
 }
 
-function mostrarRecomendacoes(recs, criterio) {
-    if (!recs || recs.length === 0) {
+function mostrarRecomendacoes(data) {
+    if (!data.recomendacoes || data.recomendacoes.length === 0) {
         mostrarErro('Nenhuma recomendação encontrada.');
         return;
     }
-    document.getElementById('recommendationCriteria').textContent = criterio;
-    document.getElementById('recommendationsList').innerHTML = recs.map(s => {
-        const actorBadge = s._ator ? `<span class="actor-badge">🌟 ${s._ator}</span>` : '';
-        return cardHTML(s, actorBadge);
+    document.getElementById('recommendationCriteria').textContent = data.criterio || '';
+    document.getElementById('recommendationsList').innerHTML = data.recomendacoes.map(s => {
+        const extra = s.ator_em_comum ? `<span class="actor-badge">🌟 ${s.ator_em_comum}</span>` : '';
+        return cardHTML(s, extra);
     }).join('');
     mostrar('recommendations');
     document.getElementById('recommendations').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -315,13 +203,13 @@ function mostrarRecomendacoes(recs, criterio) {
 
 // ======== HELPERS ========
 function cardHTML(s, extra = '') {
-    const nome = s.name || s.original_name || 'Sem nome';
-    const ano = (s.first_air_date || '').slice(0, 4);
-    const nota = s.vote_average ? s.vote_average.toFixed(1) : 'N/A';
+    const nome = s.nome || 'Sem nome';
+    const ano = s.ano || '';
+    const nota = s.nota ? s.nota.toFixed(1) : 'N/A';
     return `
         <div class="rec-card" onclick="selecionarSerie(${s.id})" title="${nome}">
-            ${s.poster_path
-                ? `<img src="${IMG_BASE}${s.poster_path}" alt="${nome}" loading="lazy">`
+            ${s.poster
+                ? `<img src="${s.poster}" alt="${nome}" loading="lazy">`
                 : '<div class="no-poster-card">🎬</div>'}
             ${extra}
             <div class="rec-card-info">
